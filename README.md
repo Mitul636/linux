@@ -1,1 +1,2 @@
 # linux
+DONT COPY IF YOU COPY THEN CREDIT ME OR I AM COMING WITH Tung Tung Sahur's Bat
