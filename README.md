@@ -16,3 +16,6 @@ bash <(curl -sSL https://raw.githubusercontent.com/Mitul636/linux/main/lxc-vm.sh
 
 For Secure Ssh Setup
 bash <(curl -sSL https://raw.githubusercontent.com/Mitul636/linux/main/ssh-setup.sh)
+
+For Not Getting Scam Try Detection Tool To Know Your Vps
+bash <(curl -sSL https://raw.githubusercontent.com/Mitul636/linux/main/detect-vps.sh)
