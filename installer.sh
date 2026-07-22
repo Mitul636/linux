@@ -1,63 +1,78 @@
 #!/bin/bash
 
-# =======================================================
-#  Airlink Custom Auto-Installer
-#  Panel Repository:  https://github.com/Mitul636/panel-v1
-#  Daemon Repository: https://github.com/Mitul636/daemon-v1
-# =======================================================
+# ==============================================================================
+# Airlink Modified Panel & Daemon Installer
+# Repositories:
+#   - Panel:  https://github.com/Mitul636/panel-v1
+#   - Daemon: https://github.com/Mitul636/daemon-v1
+# ==============================================================================
 
 set -e
 
-# Visual colors
+# --- Colors for Output ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Repositories
+# --- Repository & Directory Config ---
 PANEL_REPO="https://github.com/Mitul636/panel-v1.git"
 DAEMON_REPO="https://github.com/Mitul636/daemon-v1.git"
 
-# Paths
-PANEL_DIR="/var/www/airlink"
+PANEL_DIR="/var/www/airlink-panel"
 DAEMON_DIR="/etc/airlink-daemon"
 
-# Check root privileges
-if [ "$EUID" -ne 0 ]; then
-  echo -e "${RED}Error: Please run this script as root or with sudo.${NC}"
-  exit 1
-fi
-
+# --- Helper Functions ---
 print_banner() {
   clear
-  echo -e "${BLUE}"
-  echo "======================================================"
-  echo "         Airlink Panel & Daemon Installer             "
-  echo "       (Custom Fork: Mitul636 Panel / Daemon)        "
-  echo "======================================================"
+  echo -e "${CYAN}"
+  echo "=========================================================="
+  echo "         Airlink Custom Installer (Mitul636 Edition)      "
+  echo "=========================================================="
   echo -e "${NC}"
 }
 
-install_base_deps() {
-  echo -e "${YELLOW}[1/4] Updating packages and installing base dependencies...${NC}"
-  apt-get update -y
-  apt-get install -y curl git unzip tar build-essential software-properties-common ca-certificates gnupg
+check_root() {
+  if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}[ERROR] Please run this script as root (use sudo).${NC}"
+    exit 1
+  fi
+}
 
-  # Install Bun if missing
+install_system_deps() {
+  echo -e "${YELLOW}[1/4] Updating packages and installing basic tools...${NC}"
+  if command -v apt-get &> /dev/null; then
+    apt-get update -y
+    apt-get install -y curl git unzip tar build-essential ca-certificates gnupg
+  elif command -v dnf &> /dev/null; then
+    dnf install -y curl git unzip tar gcc gcc-c++ make ca-certificates
+  else
+    echo -e "${RED}[ERROR] Unsupported package manager. Please use Ubuntu/Debian or RHEL/CentOS.${NC}"
+    exit 1
+  fi
+}
+
+install_nodejs() {
+  if ! command -v node &> /dev/null; then
+    echo -e "${YELLOW}Installing Node.js 20 LTS...${NC}"
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y nodejs || dnf install -y nodejs
+  else
+    echo -e "${GREEN}[OK] Node.js is already installed: $(node -v)${NC}"
+  fi
+}
+
+install_bun() {
   if ! command -v bun &> /dev/null; then
-    echo -e "${YELLOW}Installing Bun runtime...${NC}"
+    echo -e "${YELLOW}Installing Bun...${NC}"
     curl -fsSL https://bun.sh/install | bash
     export BUN_INSTALL="$HOME/.bun"
     export PATH="$BUN_INSTALL/bin:$PATH"
     ln -sf "$HOME/.bun/bin/bun" /usr/local/bin/bun
-  fi
-
-  # Install Node.js (v20 LTS) if missing
-  if ! command -v node &> /dev/null; then
-    echo -e "${YELLOW}Installing Node.js...${NC}"
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-    apt-get install -y nodejs
+  else
+    echo -e "${GREEN}[OK] Bun is already installed: $(bun -v)${NC}"
   fi
 }
 
@@ -66,40 +81,68 @@ install_docker() {
     echo -e "${YELLOW}Installing Docker...${NC}"
     curl -fsSL https://get.docker.com | sh
     systemctl enable --now docker
+  else
+    echo -e "${GREEN}[OK] Docker is already installed.${NC}"
   fi
 }
 
+# --- Installation Procedures ---
 install_panel() {
-  echo -e "${GREEN}==> Installing Airlink Panel...${NC}"
-  install_base_deps
+  echo -e "${CYAN}--- Starting Installation: Airlink Panel ---${NC}"
+  
+  install_system_deps
+  install_nodejs
+  install_bun
 
-  # Prepare directory
-  mkdir -p "$PANEL_DIR"
-  if [ -d "$PANEL_DIR/.git" ]; then
-    echo -e "${YELLOW}Existing panel directory found. Pulling latest updates...${NC}"
+  # Clone or update panel repository
+  if [ -d "$PANEL_DIR" ]; then
+    echo -e "${YELLOW}Existing panel directory found at $PANEL_DIR. Updating...${NC}"
     cd "$PANEL_DIR"
     git pull
   else
-    echo -e "${YELLOW}Cloning custom panel repository...${NC}"
-    rm -rf "$PANEL_DIR"
+    echo -e "${YELLOW}Cloning Panel repository from $PANEL_REPO...${NC}"
+    mkdir -p /var/www
     git clone "$PANEL_REPO" "$PANEL_DIR"
     cd "$PANEL_DIR"
   fi
 
-  echo -e "${YELLOW}Installing dependencies and building panel...${NC}"
-  bun install || npm install
-  bun run build || npm run build
-
-  # Environment Setup
-  if [ ! -f "$PANEL_DIR/.env" ]; then
-    if [ -f "$PANEL_DIR/.env.example" ]; then
-      cp "$PANEL_DIR/.env.example" "$PANEL_DIR/.env"
-      echo -e "${YELLOW}Created .env file from .env.example. Please review and edit $PANEL_DIR/.env as needed.${NC}"
-    fi
+  # Dependencies & Build
+  echo -e "${YELLOW}Installing Panel dependencies...${NC}"
+  if [ -f "bun.lockb" ] || [ -f "bun.lock" ]; then
+    bun install
+  else
+    npm install
   fi
 
-  # Systemd Service Setup
-  echo -e "${YELLOW}Creating systemd service for Panel...${NC}"
+  # Environment setup
+  if [ ! -f ".env" ]; then
+    if [ -f ".env.example" ]; then
+      cp .env.example .env
+    else
+      echo -e "${YELLOW}Creating default .env file...${NC}"
+      cat <<EOF > .env
+PORT=3000
+DATABASE_URL="file:./dev.db"
+NODE_ENV="production"
+EOF
+    fi
+    echo -e "${GREEN}Created .env configuration file.${NC}"
+  fi
+
+  # Database setup (Prisma)
+  if [ -f "prisma/schema.prisma" ]; then
+    echo -e "${YELLOW}Setting up database schema (Prisma)...${NC}"
+    npx prisma db push --accept-data-loss || true
+  fi
+
+  # Build Panel
+  if grep -q '"build"' package.json; then
+    echo -e "${YELLOW}Building Panel static/server assets...${NC}"
+    npm run build || bun run build || true
+  fi
+
+  # Create Systemd Service for Panel
+  echo -e "${YELLOW}Configuring systemd service for Panel...${NC}"
   cat <<EOF > /etc/systemd/system/airlink-panel.service
 [Unit]
 Description=Airlink Panel Service
@@ -109,7 +152,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=$PANEL_DIR
-ExecStart=$(which bun) run start
+ExecStart=$(which bun || which npm) start
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
@@ -119,37 +162,47 @@ WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
-  systemctl enable --now airlink-panel.service
+  systemctl enable --now airlink-panel
 
-  echo -e "${GREEN}✔ Airlink Panel installation complete!${NC}"
-  echo -e "${BLUE}Directory: $PANEL_DIR${NC}"
-  echo -e "${BLUE}Service Status: systemctl status airlink-panel${NC}"
+  echo -e "${GREEN}=========================================================="
+  echo "      Airlink Panel Installation Complete!"
+  echo "      Status: systemctl status airlink-panel"
+  echo "==========================================================${NC}"
 }
 
 install_daemon() {
-  echo -e "${GREEN}==> Installing Airlink Daemon...${NC}"
-  install_base_deps
+  echo -e "${CYAN}--- Starting Installation: Airlink Daemon ---${NC}"
+  
+  install_system_deps
+  install_bun
   install_docker
 
-  # Prepare directory
-  mkdir -p "$DAEMON_DIR"
-  if [ -d "$DAEMON_DIR/.git" ]; then
-    echo -e "${YELLOW}Existing daemon directory found. Pulling latest updates...${NC}"
+  # Clone or update daemon repository
+  if [ -d "$DAEMON_DIR" ]; then
+    echo -e "${YELLOW}Existing daemon directory found at $DAEMON_DIR. Updating...${NC}"
     cd "$DAEMON_DIR"
     git pull
   else
-    echo -e "${YELLOW}Cloning custom daemon repository...${NC}"
-    rm -rf "$DAEMON_DIR"
+    echo -e "${YELLOW}Cloning Daemon repository from $DAEMON_REPO...${NC}"
     git clone "$DAEMON_REPO" "$DAEMON_DIR"
     cd "$DAEMON_DIR"
   fi
 
-  echo -e "${YELLOW}Installing dependencies and building daemon...${NC}"
-  bun install || npm install
-  bun run build || npm run build
+  # Set Permissions
+  chown -R root:root "$DAEMON_DIR"
+  chmod -R 755 "$DAEMON_DIR"
 
-  # Systemd Service Setup
-  echo -e "${YELLOW}Creating systemd service for Daemon...${NC}"
+  # Dependencies & Build
+  echo -e "${YELLOW}Installing Daemon dependencies via Bun...${NC}"
+  bun install
+
+  if grep -q '"build"' package.json; then
+    echo -e "${YELLOW}Building Daemon binaries/dist...${NC}"
+    bun run build || true
+  fi
+
+  # Create Systemd Service for Daemon
+  echo -e "${YELLOW}Configuring systemd service for Daemon...${NC}"
   cat <<EOF > /etc/systemd/system/airlink-daemon.service
 [Unit]
 Description=Airlink Daemon Service
@@ -170,41 +223,47 @@ WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
-  systemctl enable --now airlink-daemon.service
+  systemctl enable --now airlink-daemon
 
-  echo -e "${GREEN}✔ Airlink Daemon installation complete!${NC}"
-  echo -e "${BLUE}Directory: $DAEMON_DIR${NC}"
-  echo -e "${BLUE}Service Status: systemctl status airlink-daemon${NC}"
+  echo -e "${GREEN}=========================================================="
+  echo "      Airlink Daemon Installation Complete!"
+  echo "      Status: systemctl status airlink-daemon"
+  echo "==========================================================${NC}"
 }
 
-# Main Interactive Menu
-print_banner
-echo "Select what you want to install:"
-echo "1) Install Airlink Panel"
-echo "2) Install Airlink Daemon"
-echo "3) Install Both (Panel + Daemon)"
-echo "4) Exit"
-echo ""
-read -p "Enter your choice [1-4]: " CHOICE
+# --- Main Menu ---
+main() {
+  check_root
+  print_banner
 
-case $CHOICE in
-  1)
-    install_panel
-    ;;
-  2)
-    install_daemon
-    ;;
-  3)
-    install_panel
-    echo -e "\n------------------------------------------------------\n"
-    install_daemon
-    ;;
-  4)
-    echo -e "${YELLOW}Installation cancelled.${NC}"
-    exit 0
-    ;;
-  *)
-    echo -e "${RED}Invalid choice.${NC}"
-    exit 1
-    ;;
-esac
+  echo "What would you like to install?"
+  echo "  1) Install Panel ($PANEL_REPO)"
+  echo "  2) Install Daemon ($DAEMON_REPO)"
+  echo "  3) Install Both (Panel + Daemon)"
+  echo "  4) Exit"
+  echo ""
+  read -rp "Enter choice [1-4]: " choice
+
+  case $choice in
+    1)
+      install_panel
+      ;;
+    2)
+      install_daemon
+      ;;
+    3)
+      install_panel
+      install_daemon
+      ;;
+    4)
+      echo "Exiting installer."
+      exit 0
+      ;;
+    *)
+      echo -e "${RED}Invalid selection.${NC}"
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
