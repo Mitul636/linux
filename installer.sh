@@ -242,7 +242,7 @@ main() {
   echo "  3) Install Both (Panel + Daemon)"
   echo "  4) Exit"
   echo ""
-  read -rp "Enter choice [1-4]: " choice
+  read -rp "Enter choice [1-4]: " choice </dev/tty
 
   case $choice in
     1)
