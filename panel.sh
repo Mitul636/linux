@@ -48,12 +48,14 @@ install_dependencies() {
   apt-get update -y
   apt-get install -y software-properties-common curl tar unzip git gnupg lsb-release
 
-  output "Configuring PHP Repository (Direct Import)..."
+  output "Configuring PHP Repository (Direct HTTP Key Import)..."
   CODENAME=$(lsb_release -sc)
   mkdir -p /etc/apt/keyrings
 
-  # FIX 1: Forced -4 IPv4 on keyserver download to prevent APT hanging
-  curl -4 -sS "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x4F4EA0AAE5267A6C" | gpg --dearmor -o /etc/apt/keyrings/ondrej-php.gpg --yes
+  # Uses http:// (Port 80) with sury.org fallback to avoid HTTPS port 443 timeouts
+  curl -4 -sSL "http://keyserver.ubuntu.com/pks/lookup?op=get&search=0x4F4EA0AAE5267A6C" | gpg --dearmor -o /etc/apt/keyrings/ondrej-php.gpg --yes || \
+  curl -4 -sSL https://packages.sury.org/php/apt.gpg > /etc/apt/keyrings/ondrej-php.gpg
+
   echo "deb [signed-by=/etc/apt/keyrings/ondrej-php.gpg] https://ppa.launchpadcontent.net/ondrej/php/ubuntu ${CODENAME} main" > /etc/apt/sources.list.d/ondrej-ubuntu-php.list
 
   apt-get update -y
@@ -173,7 +175,6 @@ EOF
 install_docker() {
   if ! [ -x "$(command -v docker)" ]; then
     output "Installing Docker for Wings..."
-    # FIX 2: Forced -4 IPv4 on Docker setup script
     curl -4 -fsSL https://get.docker.com | sh
     systemctl enable --now docker
   else
@@ -196,7 +197,6 @@ install_wings() {
   esac
 
   output "Downloading Wings binary..."
-  # FIX 3: Forced -4 IPv4 on Wings binary download from GitHub
   curl -4 -L -o /usr/local/bin/wings "https://github.com/pelican-dev/wings/releases/latest/download/wings_linux_${WINGS_ARCH}"
   chmod +x /usr/local/bin/wings
 
