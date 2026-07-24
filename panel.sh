@@ -44,18 +44,21 @@ check_root() {
 }
 
 install_dependencies() {
-  output "Updating package lists and installing required tools..."
+  output "Updating package lists and installing core dependencies..."
   apt-get update -y
   apt-get install -y software-properties-common curl tar unzip git gnupg lsb-release
 
-  # Add Ondřej Surý PHP repository on Ubuntu/Debian for PHP 8.3
-  if [ -f /etc/lsb-release ] || [ -f /etc/debian_version ]; then
-    output "Configuring PHP repository..."
-    LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php || true
-    apt-get update -y
-  fi
+  output "Configuring PHP Repository (Direct Import)..."
+  CODENAME=$(lsb_release -sc)
+  mkdir -p /etc/apt/keyrings
 
-  output "Installing PHP 8.3 and official required extensions..."
+  # Direct key import (Bypasses Launchpad API timeouts)
+  curl -sS "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x4F4EA0AAE5267A6C" | gpg --dearmor -o /etc/apt/keyrings/ondrej-php.gpg --yes
+  echo "deb [signed-by=/etc/apt/keyrings/ondrej-php.gpg] https://ppa.launchpadcontent.net/ondrej/php/ubuntu ${CODENAME} main" > /etc/apt/sources.list.d/ondrej-ubuntu-php.list
+
+  apt-get update -y
+
+  output "Installing PHP 8.3 and required extensions..."
   apt-get install -y \
     php8.3 \
     php8.3-fpm \
@@ -90,7 +93,6 @@ install_panel() {
   read -rp "* Enter your Domain Name or Server IP (e.g., panel.example.com or 192.168.1.100): " PANEL_FQDN
   [ -z "$PANEL_FQDN" ] && PANEL_FQDN="localhost"
 
-  # 1. Create directory and download panel files
   output "Creating panel directory (/var/www/pelican)..."
   mkdir -p /var/www/pelican
   cd /var/www/pelican
@@ -98,22 +100,17 @@ install_panel() {
   output "Downloading and extracting latest Pelican Panel release..."
   curl -L https://github.com/pelican-dev/panel/releases/latest/download/panel.tar.gz | tar -xzv
 
-  # 2. Set file permissions before composer
   chmod -R 755 storage/* bootstrap/cache/
 
-  # 3. Install composer dependencies
   output "Installing Composer dependencies..."
   COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
 
-  # 4. Run Pelican environment setup
   output "Running Pelican environment setup CLI..."
   php artisan p:environment:setup
 
-  # 5. Set webserver ownership
   output "Setting webserver permissions (www-data)..."
   chown -R www-data:www-data /var/www/pelican
 
-  # 6. Configure Nginx
   output "Configuring Nginx web server..."
   rm -f /etc/nginx/sites-enabled/default
 
@@ -172,7 +169,7 @@ EOF
 install_docker() {
   if ! [ -x "$(command -v docker)" ]; then
     output "Installing Docker for Wings..."
-    curl -fsSL https://getdocker.com | sh
+    curl -fsSL https://get.docker.com | sh
     systemctl enable --now docker
   else
     output "Docker is already installed."
