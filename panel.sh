@@ -52,8 +52,8 @@ install_dependencies() {
   CODENAME=$(lsb_release -sc)
   mkdir -p /etc/apt/keyrings
 
-  # Direct key import (Bypasses Launchpad API timeouts)
-  curl -sS "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x4F4EA0AAE5267A6C" | gpg --dearmor -o /etc/apt/keyrings/ondrej-php.gpg --yes
+  # FIX 1: Forced -4 IPv4 on keyserver download to prevent APT hanging
+  curl -4 -sS "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x4F4EA0AAE5267A6C" | gpg --dearmor -o /etc/apt/keyrings/ondrej-php.gpg --yes
   echo "deb [signed-by=/etc/apt/keyrings/ondrej-php.gpg] https://ppa.launchpadcontent.net/ondrej/php/ubuntu ${CODENAME} main" > /etc/apt/sources.list.d/ondrej-ubuntu-php.list
 
   apt-get update -y
@@ -78,7 +78,8 @@ install_dependencies() {
 install_composer() {
   if ! [ -x "$(command -v composer)" ]; then
     output "Installing Composer globally..."
-    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+    curl -4 -sSL https://getcomposer.org/download/latest-stable/composer.phar -o /usr/local/bin/composer
+    chmod +x /usr/local/bin/composer
   else
     output "Composer is already installed."
   fi
@@ -98,7 +99,10 @@ install_panel() {
   cd /var/www/pelican
 
   output "Downloading and extracting latest Pelican Panel release..."
-  curl -L https://github.com/pelican-dev/panel/releases/latest/download/panel.tar.gz | tar -xzv
+  curl -4 -L -o panel.tar.gz https://github.com/pelican-dev/panel/releases/latest/download/panel.tar.gz
+
+  tar -xzvf panel.tar.gz
+  rm -f panel.tar.gz
 
   chmod -R 755 storage/* bootstrap/cache/
 
@@ -169,7 +173,8 @@ EOF
 install_docker() {
   if ! [ -x "$(command -v docker)" ]; then
     output "Installing Docker for Wings..."
-    curl -fsSL https://get.docker.com | sh
+    # FIX 2: Forced -4 IPv4 on Docker setup script
+    curl -4 -fsSL https://get.docker.com | sh
     systemctl enable --now docker
   else
     output "Docker is already installed."
@@ -191,7 +196,8 @@ install_wings() {
   esac
 
   output "Downloading Wings binary..."
-  curl -L -o /usr/local/bin/wings "https://github.com/pelican-dev/wings/releases/latest/download/wings_linux_${WINGS_ARCH}"
+  # FIX 3: Forced -4 IPv4 on Wings binary download from GitHub
+  curl -4 -L -o /usr/local/bin/wings "https://github.com/pelican-dev/wings/releases/latest/download/wings_linux_${WINGS_ARCH}"
   chmod +x /usr/local/bin/wings
 
   output "Creating systemd service for Wings..."
