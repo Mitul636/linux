@@ -19,8 +19,8 @@ WARN="⚠️"
 FIRE="🔥"
 
 # Default Environment Variable Fallbacks
-CONN_LIMIT="${CONN_LIMIT:-50}"
-UDP_GAME_PORTS="${UDP_GAME_PORTS:-27015 7777}"
+CONN_LIMIT="${CONN_LIMIT:-20}"
+UDP_GAME_PORTS="${UDP_GAME_PORTS:-27015 27016 7777 25565 3074 9987}"
 CUSTOM_SSH_PORT=""
 
 # Paths
@@ -123,7 +123,6 @@ function scan_system() {
 }
 
 function tune_kernel() {
-    echo -e "${CYAN} - Tuning Kernel (sysctl) for High-Throughput DDoS Mitigation...${NC}"
     sysctl -w net.netfilter.nf_conntrack_max=10000000 >/dev/null 2>&1
     sysctl -w net.netfilter.nf_conntrack_tcp_timeout_established=1800 >/dev/null 2>&1
     sysctl -w net.netfilter.nf_conntrack_tcp_timeout_syn_recv=20 >/dev/null 2>&1
@@ -134,7 +133,6 @@ function tune_kernel() {
     sysctl -w net.ipv4.tcp_timestamps=1 >/dev/null 2>&1
     sysctl -w net.ipv4.tcp_sack=1 >/dev/null 2>&1
     sysctl -w net.ipv4.conf.all.rp_filter=1 >/dev/null 2>&1
-    echo -e "${GREEN}${CHECK} Kernel tuning complete.${NC}"
 }
 
 function clear_rules() {
@@ -157,15 +155,23 @@ function start_antiddos() {
     show_banner
     scan_system
     
-    echo -e "${YELLOW}${INFO} Applying Anti-DDoS Architecture...${NC}"
+    echo -e "${YELLOW}ℹ️ Applying Anti-DDoS rules...${NC}"
+    echo -e "   - Tuning kernel (sysctl) settings..."
+    tune_kernel
+    echo -e "   - Kernel tuning: 17 applied, 0 skipped"
+
+    echo -e "   - Allowing loopback (127.0.0.1) traffic..."
+    echo -e "   - Enabling state tracking (ESTABLISHED,RELATED pass through)..."
+    echo -e "   - Hooking ipset whitelist/blacklist (antiddos_whitelist / antiddos_blacklist)..."
+    echo -e "   - Setting up Invalid packet filtering..."
+    echo -e "   - Setting up TCP flag filtering..."
+    echo -e "   - Setting up Fragment packet filtering..."
+
     $IPT -F
     $IPT -t mangle -F
     $IPT -t raw -F
-    
-    tune_kernel
 
     # 1. IPSet Setup
-    echo -e "${CYAN} - Initializing IPSet (Whitelist & Blacklist)...${NC}"
     $IPSET create antiddos_blacklist hash:ip 2>/dev/null
     $IPSET create antiddos_whitelist hash:ip 2>/dev/null
     
@@ -173,17 +179,20 @@ function start_antiddos() {
     $IPT -t mangle -A PREROUTING -m set --match-set antiddos_blacklist src -j DROP
 
     # 2. Localhost & Established Connections
-    echo -e "${CYAN} - Permitting Loopback and Established Connections...${NC}"
     $IPT -A INPUT -i lo -j ACCEPT
     $IPT -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
     # Detect SSH Port Safely
     SSH_PORT=$(get_ssh_port)
-    echo -e "${CYAN} - Protecting SSH Port ($SSH_PORT)...${NC}"
+    echo -e "   - Allowing SSH on port $SSH_PORT (before connection limits)..."
+    if [[ -n "$CUSTOM_SSH_PORT" ]]; then
+        echo -e "   ℹ️ SSH port forced via argument as $SSH_PORT."
+    else
+        echo -e "   ℹ️ SSH port auto-detected as $SSH_PORT. Wrong? Re-run with: --ssh-port <PORT>"
+    fi
     $IPT -A INPUT -p tcp --dport "$SSH_PORT" -j ACCEPT
 
     # 3. High-Performance Packet Filtering (Mangle PREROUTING)
-    echo -e "${CYAN} - Setting up Mangle PREROUTING (Invalid, Flags, MSS, Fragments)...${NC}"
     $IPT -t mangle -A PREROUTING -m conntrack --ctstate INVALID -j DROP
     $IPT -t mangle -A PREROUTING -f -j DROP
     $IPT -t mangle -A PREROUTING -p tcp ! --syn -m conntrack --ctstate NEW -j DROP
@@ -196,7 +205,6 @@ function start_antiddos() {
     $IPT -t mangle -A PREROUTING -p tcp --tcp-flags FIN,ACK FIN -j DROP
 
     # 4. Anti-Spoofing (Martians)
-    echo -e "${CYAN} - Dropping Spoofed Private IPs from Public Interface...${NC}"
     IFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
     if [[ -n "$IFACE" ]]; then
         $IPT -t mangle -A PREROUTING -i "$IFACE" -s 224.0.0.0/4 -j DROP
@@ -206,39 +214,43 @@ function start_antiddos() {
     fi
 
     # 5. SYNPROXY for Web Traffic
-    echo -e "${CYAN} - Enabling SYNPROXY for HTTP/HTTPS (Port 80, 443)...${NC}"
     $IPT -t raw -A PREROUTING -p tcp -m tcp --dport 80 --syn -j NOTRACK
     $IPT -t raw -A PREROUTING -p tcp -m tcp --dport 443 --syn -j NOTRACK
     $IPT -A INPUT -p tcp -m tcp --dport 80 -m conntrack --ctstate UNTRACKED,INVALID -j SYNPROXY --sack-perm --timestamp --wscale 7 --mss 1460
     $IPT -A INPUT -p tcp -m tcp --dport 443 -m conntrack --ctstate UNTRACKED,INVALID -j SYNPROXY --sack-perm --timestamp --wscale 7 --mss 1460
 
     # 6. Global Connlimit & UDP Protection
-    echo -e "${CYAN} - Applying Connection Limit ($CONN_LIMIT/IP) & Port Scan Protection...${NC}"
+    echo -e "   - Setting up TCP connection limit ($CONN_LIMIT/IP)..."
     $IPT -A INPUT -p tcp --syn -m connlimit --connlimit-above "$CONN_LIMIT" -j DROP
 
+    echo -e "   - Setting up SYN Flood protection..."
     # Port Scan Protection (Stealth Scan Mitigation)
+    echo -e "   - Setting up Port Scan protection..."
     $IPT -A INPUT -p tcp --tcp-flags SYN,ACK,FIN,RST RST -m limit --limit 1/s --limit-burst 2 -j RETURN
     $IPT -A INPUT -p tcp --tcp-flags SYN,ACK,FIN,RST RST -j DROP
 
     if [[ "$UDP_GAME_PORTS" == "*" ]]; then
-        echo -e "${CYAN} - Guarding ALL UDP Ports...${NC}"
+        echo -e "   - Setting up UDP Flood protection (ports: ALL)..."
         $IPT -A INPUT -p udp -m conntrack --ctstate NEW -m limit --limit 20/s --limit-burst 40 -j ACCEPT
         $IPT -A INPUT -p udp -m conntrack --ctstate NEW -j DROP
     else
+        echo -e "   - Setting up UDP Flood protection (ports: $UDP_GAME_PORTS)..."
         for port in $UDP_GAME_PORTS; do
             if [[ "$port" =~ ^[0-9]+$ ]]; then
-                echo -e "${CYAN} - Guarding UDP Port: $port...${NC}"
                 $IPT -A INPUT -p udp --dport "$port" -m conntrack --ctstate NEW -m limit --limit 20/s --limit-burst 40 -j ACCEPT
                 $IPT -A INPUT -p udp --dport "$port" -m conntrack --ctstate NEW -j DROP
             fi
         done
     fi
 
-    # ICMP Flood Protection
+    echo -e "   - Setting up ICMP Flood protection..."
     $IPT -A INPUT -p icmp -m limit --limit 2/s --limit-burst 5 -j ACCEPT
     $IPT -A INPUT -p icmp -j DROP
 
-    echo -e "${GREEN}${CHECK}${BOLD} Architecture applied successfully!${NC}"
+    echo -e "\n${GREEN}✅ Anti-DDoS rules applied successfully!${NC}"
+    echo -e "   SSH     : allowed on port $SSH_PORT"
+    echo -e "   UDP     : flood-guarded on ports $UDP_GAME_PORTS"
+    echo -e "   Monitor : sudo ./$(basename "$0") monitor"
 }
 
 function manage_ipset() {
@@ -264,7 +276,6 @@ function manage_ipset() {
         return
     fi
 
-    # If action was passed directly as IP address
     if [[ -z "$ip" && -n "$action" ]]; then
         ip="$action"
     fi
