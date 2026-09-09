@@ -148,7 +148,9 @@ function clear_rules() {
     
     $IPSET destroy antiddos_blacklist 2>/dev/null
     $IPSET destroy antiddos_whitelist 2>/dev/null
-    echo -e "${GREEN}${CHECK} Rules and sets cleared successfully.${NC}"
+    echo -e "${GREEN}✅ Rules cleared successfully.${NC}"
+    echo -e "${GREEN}✅ ipset whitelist/blacklist sets removed.${NC}"
+    echo -e "${YELLOW}ℹ️ Note: sysctl hardening stays active. Run 'sudo ./$(basename "$0") tune' to re-apply, or revert sysctl configurations if necessary.${NC}"
 }
 
 function start_antiddos() {
